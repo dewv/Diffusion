@@ -30,9 +30,8 @@ double time, delta_t, dx, dy, dz, r_check, dist, phi;
 float x[95000], y[95000], z[95000], xc[95000], yc[95000], zc[95000];
 float vx[95000], vy[95000], vz[95000], vxc[95000], vyc[95000], vzc[95000];
 float  x_j[95000], y_j[95000], z_j[95000], x_k[95000], y_k[95000], z_k[95000];
-int tag[9500], n_cb[1000], hit[9500], n_cd[1000];
+int tag[95000], n_cb[1000], hit[95000], n_cd[1000];
 int sum_ter, n_pair, k_b, o_b;
-
 
 // ************************ FUNCTION DEFINITIONS ******************************
 double getDouble(string message) {
@@ -51,10 +50,14 @@ double getDouble(string message) {
 	return myNumber;
 }
 
-void GetInputs() {
+// ********************************  MAIN  *************************************
+int main()
+{
+	cout << "One-Dimensional Diffusion Model\n";
+	// *** Get Inputs ***
 	t = getDouble("Input the temperature in Kelvin");
 	p = getDouble("Input the pressure in atm for the bath molecules");
-	del_z = pow((0.132626*t / p), (1.0 / 3.0));				// cell size
+	del_z = pow((0.132626 * t / p), (1.0 / 3.0));				// cell size
 	cout << "The cell size in nm is " << del_z << endl;
 	n_sb = getDouble("Input the number of bath molecules along one of\n"
 		"the non-diffusing (x and y) coordinates");
@@ -73,31 +76,25 @@ void GetInputs() {
 	v_d = (4.994347e9*sqrt(t / m_d));
 	beta_b = (6.01361e-20)*m_b / t;
 	beta_d = (6.01361e-20)*m_d / t;
-	lam = 0.043373 * t / (p * sqrt(1. + m_d / m_b)*(r_b + r_d)*(r_b + r_d)); // mean free path
+	lam = 0.043373 * t / (p * sqrt(1. + m_d / m_b) * (r_b + r_d) * (r_b + r_d)); // mean free path
 	cout << "The mean free path for the dilute diffusing molecules is " << lam << endl;
 	cout << "The collision probability within a bin is " << 1. - exp(-d / (lam*cos(1.))) << endl;
 	while (true) {
 		n_sd = getDouble("Input the number of diffusing molecules along the x coordinate");
-		if (n_sd < (s / (2.5*r_d))) break;
+		if (n_sd < (s / (2.5 * r_d))) break;
 		cout << "The number of diffusing molecules is too large.  Try again" << endl;
 	}
 	del_zd = s / n_sd;
 	n_d = n_sd * n_sd;
 	cout << "The number of diffusing molecules is " << n_d << endl;
 	cout << "They are spaced " << del_zd << " nm apart in the xy plane" << endl;
-}
-
-// ********************************  MAIN  *************************************
-int main()
-{
-	cout << "One-Dimensional Diffusion Model\n";
-	GetInputs();
 	// *** Particle placements ***
 	int q, k;
-	q = k = 1;
+	q = k = 0;
 	for (int i = 1; i <= n_sd; i++) {
 		for (int j = 1; j <= n_sd; j++) {
 			x[q] = (float(i) - 0.5) * del_zd + (0.125 * r_d / d) * cos(sqrt(float(j + q)));
+			cout << x[q] << endl;
 			y[q] = (float(j) - 0.5) * del_zd + (0.125 * r_d / d) * sin(sqrt(float(j + i)));
 			z[q] = (0.5 - float(k)) * del_z +  (0.25 *  r_d / d) * sin(sqrt(float(i + q)));
 			if (k == 5) k = 0;
@@ -211,7 +208,289 @@ int main()
 		" in nm per time step");
 	delta_t = r_ave / v_b;
 	cout << "The time step in seconds is " << delta_t << endl;
+	z_b = 60.08 * r_b *r_b * n_b * v_b * p / t;
+	cout << "The b-b collision frequency in sec^-1 is " << z_b << endl;
+	n_steps = getDouble("Input the number of time steps before diffusion is turned on");
+	steps = getDouble("Input the number of time steps before outputting data");
 
+	// *** Initialize trajectory sim variables ***
+	it = 1;
+	itm = 1;
+	k_b = 1;
+	coll_2b = 0;
+	coll_bd = 0;
+	coll_2d = 0;
+	n_ref = 0;
+	sum_bi = 0;
+	sum_ter = 0;
+	time = 0;
+	x_run = 0;
+	r_run = 0;
+	fr = 0;
+	for (int i = 0; i < 95000; i++) {
+		hit[i] = 0;
+		tag[i] = 0;
+	}
+	
+	cout << "Beginning trajectory simulation" << endl;
+
+	for (o_o = 0; o_o < 20; o_o++) {
+		for (o = 0; o < steps; o++) {
+			if (it == n_steps) {
+				q = 0;
+				for (int i = 0; i < n_sd; i++) {
+					for (int j = 0; j < n_sd; j++) {
+						x[q] = (float(i) - .5)*del_zd;
+						y[q] = (float(j) - .5)*del_zd;
+						z[q] = r_d;
+						vz[q] = abs(vz[q]);
+						q++;
+					}
+				}
+			}
+			// *** Translation equations ***
+			for (int i = 0, i < n_d + k_b * n_b; i++) {
+				x[i] = x[i] + vx[i] * delta_t;
+				y[i] = y[i] + vy[i] * delta_t;
+				z[i] = z[i] + vz[i] * delta_t;
+			}
+			// *** Wall recoil ***
+			if (it < n_steps) {
+				// Compartmentalized confinement in the z direction
+				for (int i = 0; i < n_d; i++) {
+					if ((z[i] < -0.5 * del_z && vz[i] < 0) ||
+						(z[i] > -r_d         && vz[i] > 0)) {
+						if (tag[i] == 0) vz[i] = -vz[i];
+					}
+				}
+				for (int i = n_d; i < n_d + k_b * n_b) {
+					if ((z[i] < r_b + r_d && vz[i] < 0) ||
+						(z[i] > d - r_b    && vz[i] > 0)) {
+						if (tag[i] == 0) vz[i] = -vz[i];
+					}
+				}
+			}
+			else {
+				// Full container confinement in the z direction
+				for (int i = 0; i < n_d; i++) {
+					if ((z[i] < r_d					 && vz[i] < 0) ||
+						(z[i] > float(k_b) * d - r_d && vz[i] > 0)) {
+						if (tag[i] == 0) vz[i] = -vz[i];
+					}
+				}
+				for (int i = n_d; i < n_d + k_b * n_b) {
+					if ((z[i] < r_b					  && vz[i] < 0) ||
+						(z[i] >= float(k_b) * d - r_b && vz[i] > 0)) {
+						if (tag[i] == 0) vz[i] = -vz[i];
+					}
+				}
+			}
+			for (int i = 0; i < n_d + k_b * n_b) {
+				// Confinement in the x and y directions
+				if (i < n_d) r_check = r_d;
+				else rcheck = r_b;
+				if ((x[i] <= r_check     && vx[i] < 0) ||
+					(x[i] >= s - r_check && vx[i] > 0)) {
+					if (tag[i] == 0) vx[i] = -vx[i];
+				}
+				if (y[i] <= r_check) && vy[i] < 0) ||
+				(y[i] >= s - r_check && vy[i] > 0)) {
+				if (tag[i] == 0) vy[i] = -vy[i];
+				}
+			}
+			// *** Molecular recoil module
+			j = k = 0;
+			while (j < n_d + k_b * n_b) {
+				while (k < n_d + k_b * n_b) {
+					dx = x[j] - x[k];
+					dy = y[j] - y[k];
+					dz = z[j] - z[k];
+					dist = dx*dx + dy*dy + dz*dz;
+					if (sqrt(dist) > 1.5 * (r_b + r_d)) continue; // goto 100 (i.e. to next k)
+						if ((j < n_d && k < n_d)) {
+							r_check = 2.0 * r_d;
+							m_j = m_d;
+							m_k = m_d;
+							if (sqrt(dist) <= r_check && tag[j] == 0 && tag[k] == 0 && time == 0) {
+								coll_2d++;
+							}
+						}
+					// p. 7
+					if (j <= n_d && k > n_d) {
+						r_check = r_b + r_d;
+						m_j = m_d;
+						m_k = m_b;
+						if (sqrt(dist) <= r_check && tag[j] == 0 && tag[k] == 0 && time > 0) {
+							coll_bd++;
+						}
+					}
+					if (j > n_d && k <= n_d) {
+						r_check = r_b + r_d;
+						m_j = m_b;
+						m_k = m_d;
+						if (sqrt(dist) <= r_check && tag[j] == 0 and tag[k] == 0 && time > 0) {
+							collbd++;
+						}
+					}
+					if (j > n_d && k > n_d) {
+						r_check = 2 * r_b;
+						m_j = m_b;
+						m_k = m_d;
+						if (sqrt(dist) <= r_check && tag[j] == 0 and tag[k] == 0 && time > 0) {
+							coll2b++;
+						}
+					}
+					if (sqrt(dist) <= r_check && tag[j] == 0 and tag[k] == 0) {
+						// molecular recoil
+						if (j <= n_d && k <= n_d && it >= n_steps) break;
+						phi = 2 * (dx * (vx[j] - vx[k]) + dy * (vy[j] - vy[k]) + dz * (vz[j] - vz[k])) / (dist * (m_j + m_k));
+						if (time > 0) { 
+							// reflection criteria
+							if (j > n_d && k <= n_d && vz[k] / (vz[k] + phi * m_j * dz) < 0) n_ref++;
+							if (j <= n_d && k > n_d && vz[j] / (vz[j] + phi * m_k * dz) < 0) n_ref++;
+						}
+						vx[k] += phi * m_j * dx;
+						vy[k] += phi * m_j * dy;
+						vz[k] += phi * m_j * dz;
+						vx[j] += phi * m_k * dx;
+						vy[j] += phi * m_k * dy;
+						vz[j] += phi * m_k * dz;
+						hit[k]++;
+						hit[j]++;
+						sum_bi++;
+					}
+					// p.8
+					if (sqrt(dist) < r_check) {
+						x_j[j] = x[j] + vx[j] * delta_t;
+						y_j[j] = y[j] + vy[j] * delta_t;
+						z_j[j] = z[j] + vz[j] * delta_t;
+						x_k[j] = x[k] + vx[k] * delta_t;
+						y_k[j] = y[k] + vy[k] * delta_t;
+						z_k[j] = z[k] + vz[k] * delta_t;
+						dist = sqrt(pow((x_j[j] - x_k[k]), 2) + pow((y_j[j] - y_k[k]), 2) + pow((z_j[j] - z_k[k]), 2));
+						if (dist <= r_check && tag[j] == 0 && tag[k] == 0) {
+							tag[j] = 1;
+							tag[k] = 1;
+						}
+						else if (dist > r_check && tag[j] == 1 && tag[k] == 1) {
+							tag[j] = 0;
+							tag[k] = 0;
+						}
+						if (it > n_steps) {
+							for (int i = 0; i < n_d; i++) {
+								x_run += abs(vz[i]);
+								r_run += sqrt(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i]);
+								fr = x_run / r_run;
+							}
+						}
+					}
+					// *** 100 ***
+				} // end of k while loop in molecular recoil
+			} // end of j while loop in molecular recoil
+			for (int i = 0; i < n_d + k_b *n_b) {
+				if (hit[i] > 1) sum_ter++;
+				hit[i] = 0;
+			}
+			if (n_steps == it) {
+				j = 0;
+				for (i = n_d; i < n_d + n_b) {
+					j++;
+					vxc[j] = vx[i];
+					vyc[j] = vy[i];
+					vzc[j] = vz[i];
+					xc[j] = x[i];
+					yc[j] = y[i];
+					zc[j] = z[i];
+				}
+			}
+			for (i = 0; i < n_d; i++) {
+				if (z[i] > (float(k_b) * d - r_d)) {
+					k = 0;
+					for (j = n_d + k_b * n_b; j < n_d + (k_b + 1) * n_b; j++) {
+						k++;
+						vx[j] = vxc[k];
+						vy[j] = vyc[k];
+						vz[j] = vzc[k];
+						x[j] = xc[k];
+						y[j] = yc[k];
+						z[j] = zc[k] + float(k_b) * d;
+					}
+					k_b++;
+				}
+			}
+			if (it >= n_steps) {
+				time += delta_t;
+			}
+			it++;
+			itm += 1;
+			if (itm == 100) {
+				cout << "The time step number is " << it << endl;
+				if (time == 0) cout << "Spin-up phase" << endl;
+				else cout << "Diffusing phase" << endl;
+				cout << "<distance> (nm) for the bath molecules is " << float(it) * delta_t * v_b << endl;
+				cout << "<distance> (nm) for the diffusing molecules is " << float(it) * delta_t * v_d << endl;
+				cout << "The cumulative number of bimolecular collisions is " << sum_bi << endl;
+				cout << "The cumulative number of termolecular collisions is " << sum_ter << endl;
+				if (time == 0) cout << "The cumulative number of d-d collisions is " << coll_2d << endl;
+				cout << "The number of bins is " << k_b << endl;
+				itm = 0;
+			}
+
+		} // end of o for loop
+		if (time > 0) {
+			cout << "The time is " << time << endl;
+			cout << "The average collision frequency for the bath molecules is " << float(coll_2b) / time << endl;
+			cout << "The average collision frequency between the bath and diffusing molecules is " << float(coll_bd) / time << endl;
+			if (coll_bd > 0) cout << "The refection coefficient is " << float(n_ref) / float(coll_bd) << endl;
+			cout << "The ratio between the distance traveled in one coordinate to the total distance travelled is " << fr << endl;
+			cout << "     Bin #     [diffusing molecules]/nm^-3     [Total]" << endl;
+			for (i = 0; i < k_b; i++) {
+				n_cd[i] = 0;
+				n_cb[i] = 0;
+			}
+			for (j = 0; j < n_d; j++) {
+				for (i = 0; i < k_b; i++) {
+					if (z[j] >= float(i - 1)*d && z[j] <= float(i) * d) {
+						n_cd[i]++;
+						exit;
+					}
+				}
+			}
+			for (j = n_d; j < n_d + k_b * n_b; j++) {
+				for (i = 0; i < k_b; i++) {
+					if (z[j] >= float(i - 1) * d && z[j] <= float(i) * d) {
+						n_cb[i]++;
+						exit;
+					}
+				}
+			}
+			for (i = 0; i < k_b; i++) {
+				cout << i + 1 << "          " << float(n_cd[i]) / (s * s * d) << "          " << float(n_cd[i] + n_cb[i]) / (s * s * d) << endl;
+			}
+		} // end of time > 0 if
+		n_pair = 0;
+		for (i = 0; i < n_d + k_b * n_b; i++) {
+			for (j = i; j < n_d + k_b * n_b) {
+				if (i > n_d && j > n_d) r_check = 2 * r_b;
+				else if (i <= n_d && j <= n_d) r_check = 0;
+				else r_check = r_b + r_d;
+				if (sqrt(pow(x[i] - x[j], 2) + pow(y[i] - y[j], 2) + pow(z[i] - z[j], 2)) <= r_check) n_pair++;
+			}
+		}
+		cout << "The number of molecules currently in contact are " << 2 * float(n_pair) << endl;
+		string input = "";
+		while (true) {
+			cout << "Do you want to continue the simulation? (y or n)" << ":  ";
+			getline(cin, input);
+			stringstream myStream(input);
+			if (myStream == 'y' or myStream == 'n')
+				break;
+			cout << "Invalid, please try again" << endl;
+		}
+		cout << "You entered: " << myStream << endl << endl;
+		if (myStream == 'n') break;
+		else steps = getDouble("Input the new number of time steps");
+	} // end of o_o for loop
 	cout << "Press enter to exit";
 	cin.ignore();
 	return 0;
